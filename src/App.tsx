@@ -193,10 +193,98 @@ const coloresPlazo = {
   "90 días": { bg: "#D4EDDA", border: "#1E7E34", badge: "#1E7E34", text: "#155724" },
 };
 
+const DEFAULTS = {
+  vacas: 80,
+  prenez: 85,
+  pesoDestete: 200,
+  precioKg: 72,
+  costoDirVaca: 14000,
+  gastosFijos: 80000,
+  tasaReemplazo: 15,
+  mortalidadBecerros: 3,
+};
+
+const ESCENARIOS = {
+  pesimista: { vacas: 80, prenez: 70, pesoDestete: 180, precioKg: 60, costoDirVaca: 16000, gastosFijos: 90000, tasaReemplazo: 18, mortalidadBecerros: 6 },
+  base: { ...DEFAULTS },
+  optimista: { vacas: 80, prenez: 90, pesoDestete: 215, precioKg: 82, costoDirVaca: 12000, gastosFijos: 70000, tasaReemplazo: 15, mortalidadBecerros: 2 },
+};
+
+function fmtMXN(n: number) {
+  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(n) >= 1_000) return `$${Math.round(n).toLocaleString("es-MX")}`;
+  return `$${n.toFixed(0)}`;
+}
+
+type Supuestos = typeof DEFAULTS;
+
+function calcular(s: Supuestos) {
+  const becerrrosNacidos = Math.round(s.vacas * (s.prenez / 100));
+  const becerrrosMuertos = Math.round(becerrrosNacidos * (s.mortalidadBecerros / 100));
+  const becerrosSobreviven = becerrrosNacidos - becerrrosMuertos;
+  const vaquillasReemplazo = Math.round(s.vacas * (s.tasaReemplazo / 100));
+  const becerrosVendibles = Math.max(0, becerrosSobreviven - vaquillasReemplazo);
+  const kgTotales = becerrosVendibles * s.pesoDestete;
+  const ingresoBruto = kgTotales * s.precioKg;
+  const costosDirectos = s.vacas * s.costoDirVaca;
+  const costoTotal = costosDirectos + s.gastosFijos;
+  const utilidad = ingresoBruto - costoTotal;
+  const margenPorVaca = s.vacas > 0 ? utilidad / s.vacas : 0;
+  const costoKg = kgTotales > 0 ? costoTotal / kgTotales : 0;
+  const precioEquilibrio = kgTotales > 0 ? costoTotal / kgTotales : 0;
+  const roi = costoTotal > 0 ? (utilidad / costoTotal) * 100 : 0;
+  return {
+    becerrrosNacidos,
+    becerrrosMuertos,
+    becerrosSobreviven,
+    vaquillasReemplazo,
+    becerrosVendibles,
+    kgTotales,
+    ingresoBruto,
+    costosDirectos,
+    costoTotal,
+    utilidad,
+    margenPorVaca,
+    costoKg,
+    precioEquilibrio,
+    roi,
+  };
+}
+
+function SliderRow({ label, value, min, max, step = 1, prefix = "", suffix = "", onChange }: {
+  label: string; value: number; min: number; max: number; step?: number;
+  prefix?: string; suffix?: string; onChange: (v: number) => void;
+}) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+        <span style={{ fontSize: 13, color: "#2D2010", fontWeight: 600 }}>{label}</span>
+        <span style={{ fontSize: 18, fontWeight: 700, color: "#1C3A1A", fontFamily: "monospace" }}>
+          {prefix}{typeof value === "number" && value >= 1000 ? value.toLocaleString("es-MX") : value}{suffix}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: "100%", accentColor: "#C8A84B", cursor: "pointer", height: 6 }}
+      />
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#8B7355", marginTop: 2 }}>
+        <span>{prefix}{min}{suffix}</span>
+        <span>{prefix}{max}{suffix}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function PlanR4P() {
   const [scores, setScores] = useState(diagnostico.map((d) => ({ ...d, score: 5 })));
   const [tabActiva, setTabActiva] = useState("plan");
-  const [accionExpandida, setAccionExpandida] = useState(null);
+  const [accionExpandida, setAccionExpandida] = useState<number | null>(null);
+  const [sup, setSup] = useState<Supuestos>({ ...DEFAULTS });
 
   const totalScore = scores.reduce((s, d) => s + d.score, 0);
   const dimMasBaja = [...scores].sort((a, b) => a.score - b.score)[0];
@@ -209,6 +297,16 @@ export default function PlanR4P() {
       : totalScore >= 40
       ? { texto: "Rancho en Subsistencia — Margen para Crecer", color: "#D4A017", bg: "#FFF3CD" }
       : { texto: "Rancho en Crisis — Intervención Urgente", color: "#C0392B", bg: "#F8D7DA" };
+
+  const proj = calcular(sup);
+  const profitColor = proj.utilidad >= 0 ? "#1E7E34" : "#C0392B";
+  const profitBg = proj.utilidad >= 0 ? "#D4EDDA" : "#F8D7DA";
+
+  const maxBarVal = Math.max(proj.ingresoBruto, proj.costoTotal, 1);
+
+  function set(key: keyof Supuestos) {
+    return (v: number) => setSup((s) => ({ ...s, [key]: v }));
+  }
 
   return (
     <div style={{ fontFamily: "'Georgia', 'Times New Roman', serif", background: "#F9F6F0", minHeight: "100vh", color: "#1C1209" }}>
@@ -236,12 +334,13 @@ export default function PlanR4P() {
       </div>
 
       {/* Tabs */}
-      <div style={{ background: "#2D2010", borderBottom: "1px solid #5A3E1A" }}>
-        <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", gap: 0 }}>
+      <div style={{ background: "#2D2010", borderBottom: "1px solid #5A3E1A", overflowX: "auto" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", gap: 0, minWidth: "max-content" }}>
           {[
             { id: "plan", label: "📋 Plan de Acción" },
             { id: "diagnostico", label: "🎯 Diagnóstico" },
             { id: "kpis", label: "📊 KPIs del Rancho" },
+            { id: "proyecciones", label: "📈 Proyecciones" },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -256,6 +355,7 @@ export default function PlanR4P() {
                 fontSize: 14,
                 fontWeight: tabActiva === tab.id ? 700 : 400,
                 transition: "all 0.2s",
+                whiteSpace: "nowrap",
               }}
             >
               {tab.label}
@@ -265,6 +365,7 @@ export default function PlanR4P() {
       </div>
 
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 16px 48px" }}>
+
         {/* TAB: PLAN DE ACCIÓN */}
         {tabActiva === "plan" && (
           <div>
@@ -276,14 +377,14 @@ export default function PlanR4P() {
 
             <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
               {["30 días", "60 días", "90 días"].map((p) => (
-                <span key={p} style={{ background: coloresPlazo[p].bg, color: coloresPlazo[p].text, border: `1px solid ${coloresPlazo[p].border}`, borderRadius: 20, padding: "4px 14px", fontSize: 13, fontWeight: 600 }}>
+                <span key={p} style={{ background: coloresPlazo[p as keyof typeof coloresPlazo].bg, color: coloresPlazo[p as keyof typeof coloresPlazo].text, border: `1px solid ${coloresPlazo[p as keyof typeof coloresPlazo].border}`, borderRadius: 20, padding: "4px 14px", fontSize: 13, fontWeight: 600 }}>
                   ● {p}
                 </span>
               ))}
             </div>
 
             {acciones.map((accion) => {
-              const c = coloresPlazo[accion.plazo];
+              const c = coloresPlazo[accion.plazo as keyof typeof coloresPlazo];
               const expandida = accionExpandida === accion.id;
               return (
                 <div
@@ -476,6 +577,183 @@ export default function PlanR4P() {
             </div>
           </div>
         )}
+
+        {/* TAB: PROYECCIONES */}
+        {tabActiva === "proyecciones" && (
+          <div>
+            {/* Intro */}
+            <div style={{ background: "#FFF8EC", border: "2px solid #C8A84B", borderRadius: 8, padding: "16px 20px", marginBottom: 24 }}>
+              <p style={{ margin: 0, fontSize: 14, color: "#5A3E1A", lineHeight: 1.6 }}>
+                <strong>Simulador Financiero R4P.</strong> Ajusta los supuestos de tu operación y observa el impacto en rentabilidad en tiempo real. Usa los escenarios como punto de partida.
+              </p>
+            </div>
+
+            {/* Scenario presets */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, color: "#5A3E1A", alignSelf: "center", fontWeight: 600, marginRight: 4 }}>Escenario:</span>
+              {([
+                { key: "pesimista", label: "Pesimista", color: "#C0392B", bg: "#F8D7DA" },
+                { key: "base", label: "Base (R4P)", color: "#117A8B", bg: "#D1ECF1" },
+                { key: "optimista", label: "Optimista", color: "#1E7E34", bg: "#D4EDDA" },
+              ] as const).map(({ key, label, color, bg }) => (
+                <button
+                  key={key}
+                  onClick={() => setSup({ ...ESCENARIOS[key] })}
+                  style={{
+                    background: bg,
+                    color,
+                    border: `1.5px solid ${color}`,
+                    borderRadius: 20,
+                    padding: "5px 16px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontFamily: "Georgia, serif",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                onClick={() => setSup({ ...DEFAULTS })}
+                style={{
+                  background: "#F0EAE0",
+                  color: "#5A3E1A",
+                  border: "1.5px solid #C8A84B",
+                  borderRadius: 20,
+                  padding: "5px 16px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontFamily: "Georgia, serif",
+                  marginLeft: "auto",
+                }}
+              >
+                ↺ Restablecer
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
+
+              {/* Left: Sliders */}
+              <div style={{ background: "#FFFFFF", border: "1px solid #E0D4C0", borderRadius: 8, padding: "20px 20px 12px" }}>
+                <div style={{ fontSize: 12, fontFamily: "monospace", color: "#8B6914", fontWeight: 700, marginBottom: 18, textTransform: "uppercase", letterSpacing: 1 }}>Supuestos</div>
+
+                <SliderRow label="Vacas en producción" value={sup.vacas} min={20} max={300} onChange={set("vacas")} suffix=" cab" />
+                <SliderRow label="Tasa de preñez" value={sup.prenez} min={50} max={98} onChange={set("prenez")} suffix="%" />
+                <SliderRow label="Peso al destete" value={sup.pesoDestete} min={140} max={260} onChange={set("pesoDestete")} suffix=" kg" />
+                <SliderRow label="Precio de venta" value={sup.precioKg} min={45} max={110} step={1} onChange={set("precioKg")} prefix="$" suffix=" /kg" />
+                <SliderRow label="Costo directo/vaca/año" value={sup.costoDirVaca} min={6000} max={30000} step={500} onChange={set("costoDirVaca")} prefix="$" suffix=" MXN" />
+                <SliderRow label="Gastos fijos anuales" value={sup.gastosFijos} min={20000} max={300000} step={5000} onChange={set("gastosFijos")} prefix="$" suffix=" MXN" />
+                <SliderRow label="Tasa de reemplazo" value={sup.tasaReemplazo} min={5} max={30} onChange={set("tasaReemplazo")} suffix="%" />
+                <SliderRow label="Mortalidad becerros" value={sup.mortalidadBecerros} min={0} max={15} onChange={set("mortalidadBecerros")} suffix="%" />
+              </div>
+
+              {/* Right: Results */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+                {/* Herd funnel */}
+                <div style={{ background: "#FFFFFF", border: "1px solid #E0D4C0", borderRadius: 8, padding: "16px 18px" }}>
+                  <div style={{ fontSize: 12, fontFamily: "monospace", color: "#8B6914", fontWeight: 700, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>Flujo del Hato</div>
+                  {[
+                    { label: "Becerros nacidos", value: proj.becerrrosNacidos, unit: "cab", color: "#1C3A1A" },
+                    { label: "Mortalidad", value: -proj.becerrrosMuertos, unit: "cab", color: "#C0392B" },
+                    { label: "Vaquillas reemplazo", value: -proj.vaquillasReemplazo, unit: "cab", color: "#8B6914" },
+                    { label: "Becerros vendibles", value: proj.becerrosVendibles, unit: "cab", color: "#C8A84B", bold: true },
+                    { label: "Kg totales vendidos", value: proj.kgTotales, unit: "kg", color: "#1C3A1A", bold: true },
+                  ].map((r, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < 4 ? "1px solid #F5EDD0" : "none" }}>
+                      <span style={{ fontSize: 13, color: "#5A3E1A" }}>{r.label}</span>
+                      <span style={{ fontSize: r.bold ? 16 : 14, fontWeight: r.bold ? 700 : 400, color: r.color, fontFamily: "monospace" }}>
+                        {r.value >= 0 ? "" : "−"}{Math.abs(r.value).toLocaleString("es-MX")} {r.unit}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Revenue breakdown bar */}
+                <div style={{ background: "#FFFFFF", border: "1px solid #E0D4C0", borderRadius: 8, padding: "16px 18px" }}>
+                  <div style={{ fontSize: 12, fontFamily: "monospace", color: "#8B6914", fontWeight: 700, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>Desglose Financiero</div>
+                  {[
+                    { label: "Ingresos brutos", value: proj.ingresoBruto, color: "#1C3A1A" },
+                    { label: "Costos directos", value: proj.costosDirectos, color: "#6B4C1E" },
+                    { label: "Gastos fijos", value: sup.gastosFijos, color: "#8B6914" },
+                  ].map((r, i) => (
+                    <div key={i} style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: "#5A3E1A" }}>{r.label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: r.color, fontFamily: "monospace" }}>{fmtMXN(r.value)}</span>
+                      </div>
+                      <div style={{ height: 8, background: "#F0EAE0", borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${(r.value / maxBarVal) * 100}%`, background: r.color, borderRadius: 4, transition: "width 0.3s" }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Bottom KPI cards */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {[
+                    { label: "Utilidad neta", value: fmtMXN(proj.utilidad), sub: "MXN/año", highlight: true },
+                    { label: "Margen/vaca", value: fmtMXN(proj.margenPorVaca), sub: "MXN/cab" },
+                    { label: "Costo/kg prod.", value: `$${proj.costoKg.toFixed(1)}`, sub: "MXN/kg", alert: proj.costoKg > 48 },
+                    { label: "ROI operativo", value: `${proj.roi.toFixed(1)}%`, sub: proj.roi >= 0 ? "positivo" : "negativo", alert: proj.roi < 0 },
+                  ].map((card, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        background: card.highlight ? profitBg : card.alert ? "#FFF3CD" : "#FFFFFF",
+                        border: `1px solid ${card.highlight ? profitColor : card.alert ? "#D4A017" : "#E0D4C0"}`,
+                        borderRadius: 8,
+                        padding: "12px 14px",
+                      }}
+                    >
+                      <div style={{ fontSize: 11, fontFamily: "monospace", color: "#8B6914", fontWeight: 700, marginBottom: 4, textTransform: "uppercase" }}>{card.label}</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: card.highlight ? profitColor : card.alert ? "#D4A017" : "#1C3A1A", fontFamily: "monospace", lineHeight: 1.1 }}>{card.value}</div>
+                      <div style={{ fontSize: 11, color: "#8B7355", marginTop: 2 }}>{card.sub}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Breakeven callout */}
+                <div style={{ background: "#1C3A1A", color: "#F5EDD0", borderRadius: 8, padding: "14px 18px" }}>
+                  <div style={{ fontSize: 11, fontFamily: "monospace", color: "#C8A84B", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Precio de Equilibrio</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <span style={{ fontSize: 26, fontWeight: 700, fontFamily: "monospace", color: sup.precioKg >= proj.precioEquilibrio ? "#A8C8A0" : "#E57373" }}>
+                        ${proj.precioEquilibrio.toFixed(1)}/kg
+                      </span>
+                      <div style={{ fontSize: 12, color: "#A8C8A0", marginTop: 2 }}>
+                        {sup.precioKg >= proj.precioEquilibrio
+                          ? `Margen de $${(sup.precioKg - proj.precioEquilibrio).toFixed(1)}/kg sobre equilibrio`
+                          : `Necesitas $${(proj.precioEquilibrio - sup.precioKg).toFixed(1)}/kg más para cubrir costos`}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 11, color: "#A8C8A0" }}>Precio actual</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: "#C8A84B", fontFamily: "monospace" }}>${sup.precioKg}/kg</div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            {/* Negative margin alert */}
+            {proj.utilidad < 0 && (
+              <div style={{ background: "#F8D7DA", border: "2px solid #C0392B", borderRadius: 8, padding: "14px 18px", marginTop: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#C0392B", marginBottom: 4 }}>⚠ Operación con Pérdida</div>
+                <div style={{ fontSize: 13, color: "#721C24", lineHeight: 1.6 }}>
+                  Con estos supuestos el rancho pierde <strong>{fmtMXN(Math.abs(proj.utilidad))} MXN/año</strong>.
+                  Las palancas más efectivas son: aumentar la tasa de preñez, elevar el precio de venta,
+                  reducir costos directos por vaca, o incrementar el hato.
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
       </div>
     </div>
   );
